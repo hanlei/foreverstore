@@ -3,6 +3,7 @@ package p2p
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 )
 
@@ -31,6 +32,7 @@ type TCPTransportOpts struct {
 	ListenAddr    string
 	HandshakeFunc HandshakeFunc
 	Decoder       Decoder
+	OnPeer        func(Peer) error
 }
 
 type TCPTransport struct {
@@ -50,7 +52,7 @@ func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 }
 
 // Comsume implements ther Transport interface,which will return read-only channel
-// for reading the incoming messages reveived from another peer in the network
+// for reading the incoming messages reveived from another peer in the network.
 func (t *TCPTransport) Consume() <-chan RPC {
 	return t.rpcch
 }
@@ -85,20 +87,34 @@ func (t *TCPTransport) startAcceptLoop() {
 type Temp struct{}
 
 func (t *TCPTransport) handleConn(conn net.Conn) {
+	var err error
+
+	defer func() {
+		fmt.Printf("dropping peer connection : %s", err)
+		conn.Close()
+	}()
+
 	peer := NewTCPPeer(conn, true)
 
-	if err := t.HandshakeFunc(peer); err != nil {
-		conn.Close()
-		fmt.Printf("TCP handshake error: %s\n", err)
+	if err = t.HandshakeFunc(peer); err != nil {
 		return
+	}
+
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
+			return
+		}
 	}
 
 	// Read Loop
 	rpc := RPC{}
 	for {
+		err = t.Decoder.Decode(conn, &rpc)
+		fmt.Println(reflect.TypeOf(err))
+		panic(err)
 
-		if err := t.Decoder.Decode(conn, &rpc); err != nil {
-			fmt.Printf("TCP error: %s\n", err)
+		if err != nil {
+			fmt.Printf("TCP read error: %s\n", err)
 			continue
 		}
 
